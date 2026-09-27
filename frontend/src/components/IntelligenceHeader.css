@@ -1,0 +1,137 @@
+.intelligence-header {
+  --header-bg: #0b1016;
+  --header-border: rgba(184, 202, 218, 0.16);
+  --header-text: #d7dee6;
+  --header-muted: #8793a0;
+  --header-accent: #e4ae45;
+  align-items: center;
+  background: var(--header-bg);
+  border-bottom: 1px solid var(--header-border);
+  display: flex;
+  flex: 0 0 var(--intelligence-header-height);
+  gap: 34px;
+  min-height: var(--intelligence-header-height);
+  padding: 0 22px;
+  position: relative;
+  z-index: 20;
+}
+
+.intelligence-lockup {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--header-text);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 8px;
+  min-width: 0;
+  padding: 0;
+}
+
+.intelligence-lockup:focus-visible,
+.intelligence-nav-item:focus-visible {
+  outline: 0;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--header-accent) 70%, white);
+}
+
+.intelligence-lockup-mark {
+  display: block;
+  height: 30px;
+  width: 30px;
+}
+
+.intelligence-lockup-product,
+.intelligence-lockup-service,
+.intelligence-nav-item {
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0;
+}
+
+.intelligence-lockup-product {
+  color: #eef3f7;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.intelligence-lockup-divider {
+  color: #5d6874;
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.intelligence-lockup-service {
+  color: #9da8b4;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.intelligence-nav {
+  align-self: stretch;
+  display: flex;
+  gap: 4px;
+  min-width: 0;
+}
+
+.intelligence-nav-item {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--header-muted);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 12px;
+  font-weight: 650;
+  padding: 1px 11px 0;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+  white-space: nowrap;
+}
+
+.intelligence-nav-item:hover {
+  background: rgba(190, 208, 223, 0.04);
+  color: #d4dce5;
+}
+
+.intelligence-nav-item.is-active {
+  border-bottom-color: var(--header-accent);
+  color: #f1f4f7;
+}
+
+@media (max-width: 800px) {
+  .intelligence-header {
+    gap: 14px;
+    overflow-x: auto;
+    padding: 0 14px;
+    scrollbar-width: none;
+  }
+
+  .intelligence-header::-webkit-scrollbar {
+    display: none;
+  }
+
+  .intelligence-lockup-service,
+  .intelligence-lockup-divider {
+    display: none;
+  }
+
+  .intelligence-nav-item {
+    padding-inline: 9px;
+  }
+}
+
+@media (max-width: 570px) {
+  .intelligence-lockup-product {
+    display: none;
+  }
+
+  .intelligence-nav {
+    gap: 0;
+  }
+
+  .intelligence-nav-item {
+    font-size: 11px;
+  }
+}

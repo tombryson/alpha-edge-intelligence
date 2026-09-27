@@ -1,0 +1,651 @@
+version: "1.0"
+defaults:
+  analysis_contract:
+    scenario_set: [bull, base, bear]
+    rubric_priority_outputs:
+      - quality_score
+      - value_score
+      - price_targets
+      - development_timeline
+      - thesis_map
+      - monitoring_watchlist
+      - verification_queue
+      - investment_recommendation
+    monitoring_priority_scale: [high, medium, low]
+  chairman_contract:
+    preserve_sections:
+      - executive_summary
+      - quality_and_value_scoring
+      - cash_flow_and_valuation
+      - price_targets_and_scenarios
+      - thesis_map
+      - development_timeline
+      - monitoring_watchlist
+      - verification_queue
+      - headwinds_tailwinds
+      - dissenting_views
+      - investment_verdict
+      - data_gaps_and_assumptions
+    scenario_keys: [bull, base, bear]
+    required_thesis_condition_fields:
+      - condition
+      - current_status
+      - evidence_hooks
+      - priority
+    preferred_thesis_condition_fields:
+      - by
+      - trigger_window
+      - linked_milestones
+    required_watchlist_item_fields:
+      - item
+      - why_it_matters
+      - priority
+    preferred_watchlist_item_fields:
+      - evidence_hook
+      - trigger_window
+    required_verification_item_fields:
+      - field
+      - reason
+      - priority
+      - required_source
+    verification_priority_scale: [high, medium, low]
+  jsonifier_contract:
+    scenario_keys: [bull, base, bear]
+    prefer_probability_pct_field: true
+    coerce_fractional_percentages: true
+    normalize_watchlist_items_to_objects: true
+    normalize_verification_priority_to_lowercase: true
+    normalize_current_positioning_labels: true
+  memo_contract:
+    section_order:
+      - executive_summary
+      - valuation_anchor
+      - scenario_framework
+      - monitoring_watchlist
+      - verification_queue
+      - verdict
+    consistency_keys:
+      - scenario_targets
+      - scenario_probabilities
+      - probability_weighted_targets
+      - current_positioning
+  monitoring_contract:
+    thesis_condition_fields:
+      - condition
+      - current_status
+      - evidence_hooks
+      - priority
+      - by
+      - trigger_window
+      - linked_milestones
+    watchlist_item_fields:
+      - item
+      - why_it_matters
+      - priority
+      - evidence_hook
+      - trigger_window
+    verification_item_fields:
+      - field
+      - reason
+      - priority
+      - required_source
+families:
+  resources:
+    analysis_contract:
+      valuation_backbone: [risked_npv, nav, enterprise_value, funding_gap]
+      certainty_focus: [funding, permitting, construction, commissioning]
+      valuation_normalization:
+        npv_market_cap_basis: risked_npv_plus_surplus_cash_excluding_non_dfs_optionality
+        surplus_cash_debt_basis: subtract_only_obligations_not_already_reflected_in_project_cashflow_or_capex_and_never_double_count_funding_burden
+        current_multiplier_basis: current_stage_must_reflect_presently_achieved_evidence_not_management_target_state
+        ev_resource_basis: current_disclosed_attributable_code_compliant_inventory_only
+        ev_resource_exclusions: [mine_plan_output, recovered_production_proxy, exploration_targets, non_code_compliant_conceptual_inventory]
+        exploration_upside_basis: growth_beyond_current_code_compliant_resource_base
+        cost_competitiveness_basis: disclosed_or_defensible_net_aisc
+        multiplier_disclosure_required: [current, base_12m, base_24m]
+        optionality_double_counting_prohibited: true
+      stage_multiplier_ladder:
+        scoping_no_mre: 0.10
+        scoping_has_mre: 0.15
+        pfs: 0.25
+        dfs: 0.40
+        feed_underway_partial_derisking: 0.45
+        feed_complete_and_debt_mandate: 0.50
+        fid_and_committed_finance: 0.60
+        construction_gt_50_pct: 0.70
+        first_production: 0.80
+        ramp_up: 0.90
+        peak_production: 1.00
+      commodity_case_framework:
+        mode: probability_weighted_two_case
+        reference_case_label: study_reference_case
+        market_case_label: current_market_case
+        stage_multiplier_applies_to: probability_weighted_npv
+      financing_bridge_required_for_material_funding_gap: true
+      financing_sensitivity_required_for_material_funding_gap: true
+      financing_sensitivity_labels: [conservative, base, constructive]
+      pre_and_post_dilution_nav_required: true
+      target_reconciliation_basis: post_dilution_nav_share
+    chairman_contract:
+      milestone_focus: [resource_update, study, feed, debt_mandate, permitting, financing, fid, construction, commissioning, first_production]
+      evidence_hook_terms: [dfs, pfs, fs, feed, class 3, debt mandate, fid, committed finance, permit, facility, binding agreement, commissioning, first ore, first gold]
+      numeric_anchor_preference: top_ranked_panel_consensus
+      deviation_explanation_threshold_pct: 0.15
+    monitoring_contract:
+      default_confirmatory_signals: [feed complete, debt mandate signed, permit granted, financing signed, FID declared, construction milestone, commissioning milestone]
+      default_red_flags: [capex overrun, funding gap, permitting delay, grade miss, dilution]
+  software:
+    analysis_contract:
+      valuation_backbone: [ev_sales, rule_of_40, free_cash_flow_yield, margin_path]
+      certainty_focus: [retention, growth, margins, cash conversion]
+    chairman_contract:
+      milestone_focus: [guidance, product_launch, enterprise_wins, margin_inflection, cash_flow_inflection]
+      evidence_hook_terms: [arr, nrr, churn, gross margin, free cash flow, guidance, customer win]
+    monitoring_contract:
+      default_confirmatory_signals: [nrr stabilizes, enterprise win, margin expansion, fcf inflection]
+      default_red_flags: [churn spike, sales slowdown, CAC inflation, margin compression]
+  pharma:
+    analysis_contract:
+      valuation_backbone: [rnpv, peak_sales, cash_runway, partnership_optionality]
+      certainty_focus: [readouts, regulatory, manufacturing, funding]
+    chairman_contract:
+      milestone_focus: [trial_enrollment, data_readout, regulatory_filing, approval, launch, partnership]
+      evidence_hook_terms: [phase 1, phase 2, phase 3, topline, nda, bla, fda, ema, cash runway]
+    monitoring_contract:
+      default_confirmatory_signals: [enrollment completed, positive readout, filing accepted, partnership signed]
+      default_red_flags: [safety issue, endpoint miss, trial delay, financing shortfall]
+  medtech:
+    analysis_contract:
+      valuation_backbone: [ev_sales, gross_margin, reimbursement, adoption_curve]
+      certainty_focus: [regulatory, reimbursement, launch, utilization]
+    chairman_contract:
+      milestone_focus: [regulatory_clearance, reimbursement, hospital_adoption, manufacturing_scale]
+      evidence_hook_terms: [510k, pmA, cms, reimbursement, installed base, procedure volume]
+    monitoring_contract:
+      default_confirmatory_signals: [clearance won, reimbursement secured, utilization growth]
+      default_red_flags: [reimbursement denial, adoption slowdown, manufacturing issue]
+  banks:
+    analysis_contract:
+      valuation_backbone: [pbv, rote, cet1, nim]
+      certainty_focus: [credit_quality, capital, margins, provisioning]
+    chairman_contract:
+      milestone_focus: [result, capital_ratio, margin_trend, arrears_trend, capital_return]
+      evidence_hook_terms: [cet1, nim, bps, arrears, bad debts, payout]
+    monitoring_contract:
+      default_confirmatory_signals: [NIM stabilizes, CET1 strong, arrears contained]
+      default_red_flags: [credit losses rise, CET1 weakens, margin compression]
+  insurance:
+    analysis_contract:
+      valuation_backbone: [pbv, roe, combined_ratio, reserve_adequacy]
+      certainty_focus: [pricing, claims, reserves, capital]
+    chairman_contract:
+      milestone_focus: [premium_rate_trend, combined_ratio, reserve_review, catastrophe_exposure]
+      evidence_hook_terms: [combined ratio, reserve release, rate increase, catastrophe]
+    monitoring_contract:
+      default_confirmatory_signals: [rate increases hold, combined ratio improves, reserves adequate]
+      default_red_flags: [reserve strengthening, catastrophe losses, pricing erosion]
+  reit:
+    analysis_contract:
+      valuation_backbone: [nav, cap_rate, affo, ltv]
+      certainty_focus: [occupancy, leasing, refinance_risk, asset_values]
+    chairman_contract:
+      milestone_focus: [leasing, occupancy, asset_sale, refinance, distribution]
+      evidence_hook_terms: [cap rate, occupancy, waLe, affo, ltv, covenant]
+    monitoring_contract:
+      default_confirmatory_signals: [occupancy rises, leasing spreads improve, refinance completed]
+      default_red_flags: [occupancy falls, cap rates expand, covenant pressure]
+  industrials:
+    analysis_contract:
+      valuation_backbone: [ev_ebitda, free_cash_flow_yield, margin_path, orderbook]
+      certainty_focus: [demand, margin, execution, balance_sheet]
+    chairman_contract:
+      milestone_focus: [orderbook, margin_recovery, guidance, working_capital, capex]
+      evidence_hook_terms: [order book, backlog, guidance, margin, free cash flow]
+    monitoring_contract:
+      default_confirmatory_signals: [orderbook growth, margin improvement, working capital release]
+      default_red_flags: [guidance cut, margin compression, working capital blowout]
+  consumer:
+    analysis_contract:
+      valuation_backbone: [ev_ebitda, same_store_sales, gross_margin, free_cash_flow_yield]
+      certainty_focus: [demand, pricing, inventory, margins]
+    chairman_contract:
+      milestone_focus: [same_store_sales, inventory, margin, store_rollout, guidance]
+      evidence_hook_terms: [like for like, inventory, gross margin, basket size, traffic]
+    monitoring_contract:
+      default_confirmatory_signals: [same-store sales positive, inventory clean, margin stable]
+      default_red_flags: [inventory buildup, discounting, traffic slowdown]
+  datacentres:
+    analysis_contract:
+      valuation_backbone: [ev_ebitda, nav, contracted_capacity, power_pipeline]
+      certainty_focus: [precommitments, power, build_costs, funding]
+    chairman_contract:
+      milestone_focus: [power_secured, prelease, capacity_online, financing, yield_on_cost]
+      evidence_hook_terms: [MW, pre-lease, hyperscaler, yield on cost, power agreement]
+    monitoring_contract:
+      default_confirmatory_signals: [power agreement signed, pre-leasing wins, capacity commissioned]
+      default_red_flags: [power delays, cost inflation, weak preleasing]
+  energy:
+    analysis_contract:
+      valuation_backbone: [risked_nav, reserve_value, free_cash_flow_break_even, leverage]
+      certainty_focus: [commodity_price, reserves, hedging, capex]
+    chairman_contract:
+      milestone_focus: [reserve_update, drilling, commissioning, hedging, debt]
+      evidence_hook_terms: [2P, reserve life, break-even, hedge book, lifting cost]
+    monitoring_contract:
+      default_confirmatory_signals: [reserve upgrade, production beat, leverage reduction]
+      default_red_flags: [hedge lock-in downside, reserve downgrade, cost blowout]
+  general:
+    analysis_contract:
+      valuation_backbone: [intrinsic_value, relative_multiple, cash_flow_yield, balance_sheet]
+      certainty_focus: [guidance, execution, funding, governance]
+    chairman_contract:
+      milestone_focus: [guidance, result, financing, execution_milestone]
+      evidence_hook_terms: [guidance, market update, cash flow, margin, balance sheet]
+    monitoring_contract:
+      default_confirmatory_signals: [guidance delivered, balance sheet improves, execution milestone hit]
+      default_red_flags: [guidance cut, funding pressure, governance issue]
+templates:
+  gold_miner:
+    family: resources
+    industry_label: gold mining
+    supplementary_pipeline_id: resources_supplementary
+    analysis_contract:
+      commodity_case_default_weights:
+        reference_case: 0.50
+        market_case: 0.50
+      commodity_case_labels:
+        reference_case: study_gold_price
+        market_case: spot_gold_price
+      financing_bridge_required: true
+      post_dilution_nav_required: true
+    chairman_contract:
+      price_target_anchor: probability_weighted_risked_npv
+      financing_overlay: post_dilution_nav_bridge
+      valuation_methods:
+        primary: [risked_npv, spot_nav, ev_resource_oz, peer_nav_multiple, aisc_margin]
+      milestone_focus: [resource_update, study, permitting, financing, construction, first_gold]
+  silver_miner:
+    family: resources
+    industry_label: silver mining
+    supplementary_pipeline_id: resources_supplementary
+    analysis_contract:
+      commodity_case_default_weights:
+        reference_case: 0.50
+        market_case: 0.50
+      commodity_case_labels:
+        reference_case: study_silver_price
+        market_case: spot_silver_price
+      financing_bridge_required: true
+      post_dilution_nav_required: true
+    chairman_contract:
+      price_target_anchor: probability_weighted_risked_npv
+      financing_overlay: post_dilution_nav_bridge
+      valuation_methods:
+        primary: [risked_npv, spot_nav, ev_resource_oz, peer_nav_multiple, aisc_margin]
+      milestone_focus: [resource_update, study, permitting, financing, construction, first_ore]
+  copper_miner:
+    family: resources
+    industry_label: copper mining
+    supplementary_pipeline_id: resources_supplementary
+    analysis_contract:
+      commodity_case_labels:
+        reference_case: study_copper_price
+        market_case: current_market_copper_price
+      financing_bridge_required: true
+      post_dilution_nav_required: true
+    chairman_contract:
+      price_target_anchor: probability_weighted_risked_npv
+      financing_overlay: post_dilution_nav_bridge
+      valuation_methods:
+        primary: [risked_npv, ev_resource_unit, peer_nav_multiple, capex_intensity, funding_gap]
+      milestone_focus: [resource_update, study, permitting, financing, construction, first_production]
+  base_metals_miner:
+    family: resources
+    industry_label: base-metals mining
+    supplementary_pipeline_id: resources_supplementary
+    analysis_contract:
+      commodity_case_labels:
+        reference_case: study_base_metals_price
+        market_case: current_market_base_metals_price
+      financing_bridge_required: true
+      post_dilution_nav_required: true
+    chairman_contract:
+      price_target_anchor: probability_weighted_risked_npv
+      financing_overlay: post_dilution_nav_bridge
+      valuation_methods:
+        primary: [risked_npv, ev_resource_unit, peer_nav_multiple, capex_intensity, funding_gap]
+      milestone_focus: [resource_update, study, permitting, offtake, financing, construction, first_production]
+  lithium_miner:
+    family: resources
+    industry_label: lithium mining
+    supplementary_pipeline_id: resources_supplementary
+    analysis_contract:
+      commodity_case_labels:
+        reference_case: study_lithium_price
+        market_case: current_market_lithium_price
+      financing_bridge_required: true
+      post_dilution_nav_required: true
+    chairman_contract:
+      price_target_anchor: probability_weighted_risked_npv
+      financing_overlay: post_dilution_nav_bridge
+      valuation_methods:
+        primary: [risked_npv, ev_resource_unit, peer_nav_multiple, opex_curve_position, funding_gap]
+      milestone_focus: [resource_update, study, permitting, offtake, financing, commissioning]
+  uranium_miner:
+    family: resources
+    industry_label: uranium mining
+    supplementary_pipeline_id: resources_supplementary
+    analysis_contract:
+      commodity_case_labels:
+        reference_case: study_uranium_price
+        market_case: current_market_or_contract_uranium_price
+      financing_bridge_required: true
+      post_dilution_nav_required: true
+    chairman_contract:
+      price_target_anchor: probability_weighted_risked_npv
+      financing_overlay: post_dilution_nav_bridge
+      valuation_methods:
+        primary: [risked_npv, ev_resource_lb, peer_nav_multiple, break_even_price, funding_gap]
+      milestone_focus: [resource_update, study, permitting, contracting, financing, restart_or_commissioning]
+  bauxite_miner:
+    family: resources
+    industry_label: bauxite and alumina
+    supplementary_pipeline_id: resources_supplementary
+    analysis_contract:
+      commodity_case_labels:
+        reference_case: study_bauxite_or_alumina_price
+        market_case: current_market_bauxite_or_alumina_price
+      financing_bridge_required: true
+      post_dilution_nav_required: true
+    chairman_contract:
+      price_target_anchor: probability_weighted_risked_npv
+      financing_overlay: post_dilution_nav_bridge
+      valuation_methods:
+        primary: [risked_npv, ev_resource_tonne, peer_nav_multiple, logistics_cost_curve, funding_gap]
+      milestone_focus: [resource_update, refinery_or_export_plan, permitting, logistics, financing]
+  iron_ore_miner:
+    family: resources
+    industry_label: iron ore mining
+    supplementary_pipeline_id: resources_supplementary
+    analysis_contract:
+      commodity_case_labels:
+        reference_case: study_iron_ore_price
+        market_case: current_market_iron_ore_price
+      financing_bridge_required: true
+      post_dilution_nav_required: true
+    chairman_contract:
+      price_target_anchor: probability_weighted_risked_npv_or_cycle_normal_fcf
+      financing_overlay: post_dilution_nav_bridge
+      valuation_methods:
+        primary: [risked_npv, ev_resource_tonne, peer_nav_multiple, cost_curve_position, infrastructure_access]
+      milestone_focus: [resource_update, study, permitting, rail_port_access, offtake, financing, first_ore]
+  rare_earths_critical_minerals:
+    family: resources
+    industry_label: rare earths and critical minerals
+    supplementary_pipeline_id: resources_supplementary
+    analysis_contract:
+      commodity_case_labels:
+        reference_case: study_rare_earth_or_critical_mineral_price
+        market_case: current_market_or_contract_price
+      financing_bridge_required: true
+      post_dilution_nav_required: true
+    chairman_contract:
+      price_target_anchor: probability_weighted_risked_npv
+      financing_overlay: post_dilution_nav_bridge
+      valuation_methods:
+        primary: [risked_npv, ev_resource_unit, processing_optionality, offtake_quality, strategic_policy_value]
+      milestone_focus: [resource_update, metallurgy, processing_route, offtake, grant, permitting, financing]
+  coal_miner:
+    family: resources
+    industry_label: coal mining
+    supplementary_pipeline_id: resources_supplementary
+    analysis_contract:
+      commodity_case_labels:
+        reference_case: study_coal_price
+        market_case: current_market_coal_price
+      financing_bridge_required: true
+      post_dilution_nav_required: true
+    chairman_contract:
+      price_target_anchor: cycle_normal_fcf_or_probability_weighted_nav
+      financing_overlay: rehabilitation_and_closure_liability_check
+      valuation_methods:
+        primary: [free_cash_flow_yield, risked_npv, ev_reserve_tonne, cost_curve_position, capital_return_capacity]
+      milestone_focus: [production_guidance, reserve_update, mine_plan, permitting, capital_return, closure_liability]
+  diversified_miner:
+    family: resources
+    industry_label: diversified mining
+    supplementary_pipeline_id: resources_supplementary
+    analysis_contract:
+      valuation_normalization:
+        surplus_cash_debt_basis: subtract_only_obligations_not_already_reflected_in_project_cashflow_or_capex_and_never_double_count_funding_burden
+        current_multiplier_basis: current_stage_must_reflect_presently_achieved_evidence_not_management_target_state
+        portfolio_optionalities_should_not_be_double_counted_across_nav_and_resource_basket: true
+        resource_basket_basis: current_disclosed_attributable_code_compliant_resource_inventory_only
+        resource_basket_exclusions: [mine_plan_output, recovered_production_proxy, exploration_targets, non_code_compliant_conceptual_inventory]
+    chairman_contract:
+      valuation_methods:
+        primary: [sum_of_parts_nav, ev_ebitda, free_cash_flow_yield, capital_allocation]
+      milestone_focus: [production, cost_curve, expansion_project, balance_sheet, capital_returns]
+  pharma_biotech:
+    family: pharma
+    industry_label: pharma and biotech
+    supplementary_pipeline_id: pharma_biotech_supplementary
+    chairman_contract:
+      valuation_methods:
+        primary: [rnpv, ev_risk_adjusted_peak_sales, cash_runway, partnering_value]
+  medtech:
+    family: medtech
+    industry_label: medtech
+    supplementary_pipeline_id: medtech_supplementary
+    chairman_contract:
+      valuation_methods:
+        primary: [ev_sales, gross_margin_path, adoption_curve, reimbursement_value]
+  bank_financials:
+    family: banks
+    industry_label: banking and lending
+    supplementary_pipeline_id: banks_supplementary
+    chairman_contract:
+      valuation_methods:
+        primary: [price_to_book, rote, dividend_yield, nim_sensitivity]
+  insurance:
+    family: insurance
+    industry_label: insurance
+    supplementary_pipeline_id: insurance_supplementary
+    chairman_contract:
+      valuation_methods:
+        primary: [price_to_book, roe, combined_ratio, reserve_adequacy]
+  financials_bank_insurance:
+    family: insurance
+    industry_label: diversified financials and insurance
+    supplementary_pipeline_id: insurance_supplementary
+    chairman_contract:
+      valuation_methods:
+        primary: [price_to_book, roe, capital_strength, earnings_quality]
+  asset_managers_diversified_financials:
+    family: general
+    industry_label: asset managers and diversified financials
+    chairman_contract:
+      valuation_methods:
+        primary: [fee_related_earnings, aum_flows, performance_fee_optionality, capital_return, platform_value]
+  software_saas:
+    family: software
+    industry_label: software and saas
+    supplementary_pipeline_id: software_saas_supplementary
+    chairman_contract:
+      valuation_methods:
+        primary: [ev_sales, rule_of_40, free_cash_flow_yield, margin_path, retention_quality]
+  datacentres:
+    family: datacentres
+    industry_label: datacentres and digital infrastructure
+    supplementary_pipeline_id: datacentre_supplementary
+    chairman_contract:
+      valuation_methods:
+        primary: [ev_ebitda, nav, mw_capacity_value, yield_on_cost, funding_capacity]
+  utilities:
+    family: industrials
+    industry_label: utilities and regulated infrastructure
+    chairman_contract:
+      valuation_methods:
+        primary: [regulated_asset_value, dividend_capacity, ffo_to_debt, allowed_return_vs_wacc, infrastructure_nav]
+  telecommunications:
+    family: industrials
+    industry_label: telecommunications
+    chairman_contract:
+      valuation_methods:
+        primary: [ev_ebitda, free_cash_flow_yield, arpu_churn_quality, network_capex, infrastructure_value]
+  industrials:
+    family: industrials
+    industry_label: industrials
+    supplementary_pipeline_id: industrials_supplementary
+    chairman_contract:
+      valuation_methods:
+        primary: [ev_ebitda, free_cash_flow_yield, orderbook_quality, margin_recovery]
+  transport_logistics:
+    family: industrials
+    industry_label: transport and logistics
+    chairman_contract:
+      valuation_methods:
+        primary: [cycle_normal_earnings, ev_ebitda, free_cash_flow_yield, asset_network_value, utilization]
+  construction_engineering:
+    family: industrials
+    industry_label: construction and engineering
+    chairman_contract:
+      valuation_methods:
+        primary: [cycle_normal_earnings, backlog_margin_quality, free_cash_flow_yield, contract_risk, development_nav]
+  infrastructure:
+    family: industrials
+    industry_label: infrastructure
+    chairman_contract:
+      valuation_methods:
+        primary: [regulated_asset_value, concession_value, free_cash_flow_yield, ffo_to_debt, infrastructure_nav]
+  chemicals_materials:
+    family: industrials
+    industry_label: chemicals and materials
+    chairman_contract:
+      valuation_methods:
+        primary: [cycle_normal_earnings, product_spread_sensitivity, ev_ebitda, free_cash_flow_yield, replacement_value]
+  steel_base_metals_processing:
+    family: industrials
+    industry_label: steel and base-metals processing
+    chairman_contract:
+      valuation_methods:
+        primary: [cycle_normal_earnings, product_spread_sensitivity, ev_ebitda, free_cash_flow_yield, replacement_value]
+  forestry_paper_packaging:
+    family: consumer
+    industry_label: forestry paper and packaging
+    chairman_contract:
+      valuation_methods:
+        primary: [cycle_normal_earnings, timberland_or_asset_value, ev_ebitda, free_cash_flow_yield, packaging_franchise_value]
+  agriculture_agribusiness:
+    family: consumer
+    industry_label: agriculture and agribusiness
+    chairman_contract:
+      valuation_methods:
+        primary: [cycle_normal_earnings, asset_network_value, free_cash_flow_yield, commodity_margin_sensitivity, strategic_value]
+  consumer_retail:
+    family: consumer
+    industry_label: consumer and retail
+    supplementary_pipeline_id: consumer_retail_supplementary
+    chairman_contract:
+      valuation_methods:
+        primary: [ev_ebitda, same_store_sales, gross_margin, free_cash_flow_yield]
+  consumer_staples:
+    family: consumer
+    industry_label: consumer staples and food
+    chairman_contract:
+      valuation_methods:
+        primary: [ev_ebitda, free_cash_flow_yield, gross_margin, pricing_power]
+  gambling:
+    family: consumer
+    industry_label: gambling and wagering
+    chairman_contract:
+      valuation_methods:
+        primary: [ev_ebitda, free_cash_flow_yield, market_share, recurring_revenue_quality]
+  gaming_interactive:
+    family: software
+    industry_label: interactive gaming and digital entertainment
+    chairman_contract:
+      valuation_methods:
+        primary: [ev_bookings, free_cash_flow_yield, franchise_value, engagement_quality]
+  technology_platforms:
+    family: software
+    industry_label: technology platforms
+    chairman_contract:
+      valuation_methods:
+        primary: [ev_sales, free_cash_flow_yield, take_rate_quality, margin_path, network_effects]
+  crypto_digital_assets:
+    family: software
+    industry_label: crypto and digital assets
+    chairman_contract:
+      valuation_methods:
+        primary: [cycle_normal_earnings, asset_treasury_value, platform_revenue_quality, hashprice_sensitivity, regulatory_risk]
+  semiconductors:
+    family: industrials
+    industry_label: semiconductors
+    chairman_contract:
+      valuation_methods:
+        primary: [cycle_normal_earnings, ev_ebitda, gross_margin, inventory_cycle, strategic_scarcity]
+  defence:
+    family: industrials
+    industry_label: defence and aerospace
+    chairman_contract:
+      valuation_methods:
+        primary: [ev_ebitda, free_cash_flow_yield, backlog_quality, sovereign_optionality]
+  civil_aerospace:
+    family: industrials
+    industry_label: civil aerospace
+    chairman_contract:
+      valuation_methods:
+        primary: [cycle_normal_earnings, ev_ebitda, free_cash_flow_yield, installed_base_aftermarket_value, backlog_quality]
+  healthcare_services:
+    family: medtech
+    industry_label: healthcare services
+    chairman_contract:
+      valuation_methods:
+        primary: [ev_ebitda, free_cash_flow_yield, reimbursement_quality, utilization_uplift]
+  education:
+    family: consumer
+    industry_label: education
+    chairman_contract:
+      valuation_methods:
+        primary: [ev_ebitda, free_cash_flow_yield, enrolment_quality, testing_or_platform_value, regulatory_risk]
+  media_publishing:
+    family: consumer
+    industry_label: media and publishing
+    chairman_contract:
+      valuation_methods:
+        primary: [cycle_normal_earnings, ev_ebitda, free_cash_flow_yield, subscriber_or_audience_value, advertising_cycle]
+  fixed_income:
+    family: general
+    industry_label: fixed income and credit
+    chairman_contract:
+      valuation_methods:
+        primary: [yield_to_risk, nav_discount, distribution_sustainability, duration_sensitivity]
+  real_estate_reit:
+    family: reit
+    industry_label: real estate and reit
+    supplementary_pipeline_id: reit_property_supplementary
+    chairman_contract:
+      valuation_methods:
+        primary: [nav_discount, cap_rate, affo_multiple, ltv]
+  industrials_consumer_reit:
+    family: reit
+    industry_label: industrials, consumer, and reit umbrella
+    supplementary_pipeline_id: reit_property_supplementary
+    chairman_contract:
+      valuation_methods:
+        primary: [intrinsic_value, ev_ebitda, nav_discount, free_cash_flow_yield]
+  energy_oil_gas:
+    family: energy
+    industry_label: energy and oil gas
+    supplementary_pipeline_id: energy_oil_gas_supplementary
+    chairman_contract:
+      valuation_methods:
+        primary: [risked_nav, reserve_value, free_cash_flow_break_even, leverage, hedge_book]
+  general_equity:
+    family: general
+    industry_label: general equity
+    supplementary_pipeline_id: general_equity_supplementary
+    chairman_contract:
+      valuation_methods:
+        primary: [intrinsic_value, relative_multiple, free_cash_flow_yield, balance_sheet_risk]

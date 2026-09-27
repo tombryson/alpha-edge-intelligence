@@ -1,0 +1,718 @@
+"""HTTP routes for gantt-runs and portfolio-positioning-runs.
+
+Includes listing, retrieval, deletion, report-packet generation, and
+delta-check endpoints.
+"""
+
+import asyncio
+import json
+import logging
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Literal, Optional
+
+from fastapi import APIRouter, HTTPException, Request, Response
+
+from ..delta_monitor import get_latest_delta, run_delta_check
+from ..jobs.runs import (
+    _build_gantt_run_label,
+    _collect_portfolio_positioning_related_paths,
+    _collect_run_related_paths,
+    _compute_run_freshness,
+    _extract_memo_content,
+    _invalidate_gantt_run_cache,
+    _invalidate_portfolio_positioning_run_cache,
+    _is_portfolio_positioning_artifact,
+    _normalize_run_ticker,
+    _portfolio_positioning_search_roots,
+    _resolve_portfolio_positioning_artifact_path,
+    _resolve_run_artifact_path,
+    _run_ticker_aliases,
+)
+from ..jobs.structured import (
+    _backfill_stage2_ranking_telemetry,
+    _build_integration_packet,
+    _build_portfolio_positioning_run_label,
+    _build_scenario_router_summary,
+    _build_summary_fields,
+    _canonical_run_id_for_listing,
+    _cap_previous_catalyst_rows,
+    _extract_stage3_result_from_artifact,
+    _extract_stage3_structured_from_artifact,
+    _infer_current_price_from_artifact,
+    _load_latest_scenario_router_state,
+    _normalize_timeline_rows_for_api,
+    _pick_score_total,
+)
+from ..jobs.state import (
+    GANTT_RUN_LIST_CACHE_TTL_SEC,
+    JOBS_OUTPUTS_DIR,
+    OUTPUTS_DIR,
+    PROJECT_ROOT,
+    _GANTT_RUN_LIST_CACHE,
+)
+from ..synthesis.timeline import _extract_development_timeline_from_text
+from ..utils import _ensure_system_enabled
+from ..portfolio_decisions import analysis_health, build_decision, decision_for_artifact, recorded_display_rows, scenario_comparison, evaluate_conditions, shadow_returns, forecast_calibration, mandate_issues
+from ..portfolio_runtime import business_data, digest, utc_now
+from ..portfolio_evidence import timestamp
+from ..portfolio_read_store import memo_etag, portfolio_read_store, cancellation_view
+from pydantic import BaseModel, Field
+
+router = APIRouter()
+logger = logging.getLogger(__name__)
+
+@router.get("/api/portfolio-positioning-runs")
+async def list_portfolio_positioning_runs(limit: int = 20):
+    """Only new/changed files are parsed; cold legacy indexing runs off the event loop."""
+    rows = await asyncio.to_thread(portfolio_read_store.list, _portfolio_positioning_search_roots(),
+                                   max(1, int(limit)), _build_portfolio_read_models)
+    return {"runs": rows}
+
+
+def _portfolio_memo_text(payload, stage3):
+    chairman = stage3.get("chairman_document")
+    analyst = stage3.get("analyst_document")
+    return next((str(value).strip() for value in (
+        payload.get("chairman_memo_markdown"), payload.get("analyst_memo_markdown"),
+        chairman.get("content_markdown") if isinstance(chairman, dict) else None,
+        analyst.get("content_markdown") if isinstance(analyst, dict) else None,
+    ) if value and str(value).strip()), "")
+
+
+def _build_portfolio_read_models(path, payload):
+    payload = cancellation_view(path, payload)
+    stage3 = _extract_stage3_result_from_artifact(payload) or {}
+    structured = stage3.get("structured_data")
+    if not isinstance(structured, dict) or not _is_portfolio_positioning_artifact(payload, structured):
+        return None
+    recorded = timestamp(payload.get("updated_at")) or timestamp(structured.get("analysis_date"))
+    updated_at = recorded.isoformat() if recorded else datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat()
+    health = analysis_health(payload)
+    common = {"id": path.name, "file": path.name,
+              "label": _build_portfolio_positioning_run_label(path.stem, structured, payload),
+              "analysis_kind": "portfolio_positioning", "updated_at": updated_at, "workflow_version": payload.get("workflow_version", 0)}
+    summary = {**common, "analysis_date": structured.get("analysis_date"),
+               "mode": structured.get("mode") or payload.get("mode"),
+               "analysis_health": health, "summary_fields": _build_summary_fields(structured, {})}
+    reader = {key: structured[key] for key in ("executive_summary", "portfolio_diagnosis", "strategic_view",
+              "macro_scorecard", "confidence_note") if key in structured}
+    row_fields = {"asset_class", "display_name", "current_pct", "min_pct", "max_pct", "target_pct",
+                  "action", "conviction", "model_thesis_conviction", "thesis_conviction", "positioning_stance", "thesis_role", "rationale", "related_or_substitute_exposure", "allocator_commentary"}
+    for key in ("asset_class_targets", "current_sleeve_decisions"):
+        reader[key] = [{key: value for key, value in row.items() if key in row_fields}
+                       for row in recorded_display_rows(payload, key)]
+    funding = decision_for_artifact(payload)["funding"]
+    reader["decision"] = {"funding": {"status": funding["status"], "rows": [
+        {"asset_class": row["asset_class"], "target_pct": row["target_pct"]} for row in funding["rows"]]}}
+    if payload.get("workflow_version", 0) >= 3:
+        from ..portfolio_decisions import asset_key, number
+        from ..portfolio_judgment import materialize_retained_weights
+        snapshot = payload.get("portfolio_snapshot") or {}
+        current = [{"asset_class": row["asset_class"], "display_name": row.get("display_name"),
+                    "target_pct": row.get("portfolio_pct")} for row in snapshot.get("asset_classes", [])]
+        if not any(asset_key(row["asset_class"]) == "CASH" for row in current):
+            current.append({"asset_class": "cash", "target_pct": (snapshot.get("portfolio") or {}).get("cash_pct")})
+        proposal = payload.get("macro_positioning") or structured
+        alternative = materialize_retained_weights(snapshot, proposal.get("smaller_change_alternative") or {})
+        smaller = ((proposal.get("implementation_comparison") or {}).get("smaller_change") or {}).get("funding") or {}
+        views = [("current", "Current", current),
+            ("ideal", "Independent ideal", (structured.get("independent_ideal") or payload.get("independent_ideal") or {}).get("asset_class_targets", [])),
+            ("recommended", "Recommended", funding["rows"]),
+            ("smaller", "Smaller change", smaller.get("rows") or alternative.get("asset_class_targets", []))]
+        reader["portfolio_shapes"] = []
+        for identifier, title, rows in views:
+            compact = [{key: row.get(key) for key in ("asset_class", "display_name", "target_pct")} for row in rows]
+            weights = [number(row.get("target_pct")) for row in rows]
+            balanced = bool(weights) and all(value is not None and 0 <= value <= 100 for value in weights)
+            balanced = balanced and abs(sum(weights) - 100) <= .05 and len({asset_key(row["asset_class"]) for row in rows}) == len(rows)
+            reader["portfolio_shapes"].append({"id": identifier, "title": title, "rows": compact,
+                "status": "balanced" if balanced else "unresolved"})
+    markdown = _portfolio_memo_text(payload, stage3)
+    if (payload.get("workflow_version", 0) >= 4 and structured.get("asset_class_targets")
+            and "Any change remains conditional on the outstanding research below." in markdown):
+        from ..portfolio_memo import render_portfolio_memo
+        # Refresh this generated presentation only; the original saved artifact is untouched.
+        markdown = render_portfolio_memo(snapshot=payload.get("portfolio_snapshot") or {},
+            structured={**structured, "workflow_version": payload["workflow_version"]},
+            evidence_brief=payload.get("evidence_brief") or {}, citations=payload.get("source_citations") or [])
+    if payload.get("workflow_version", 0) >= 4 and not structured.get("asset_class_targets") and not (payload.get("macro_positioning") or {}).get("asset_class_targets"):
+        from ..portfolio_memo import render_portfolio_memo
+        status = payload.get("pipeline_status")
+        description = ("Analysis paused for additional API credit. Your research and draft portfolios are saved; no final recommendation has been made."
+                       if status == "awaiting_credit" else
+                       "Analysis stopped before the final recommendation. Your research and draft portfolios are saved."
+                       if status in {"failed", "incomplete", "cancelled"} else
+                       "Analysis is stopping. Your saved research and draft portfolios remain available."
+                       if status == "cancelling" else
+                       "The final recommendation is still being prepared. Your research and draft portfolios are saved below.")
+        draft = {**structured, "workflow_version": payload["workflow_version"], "partial_status": description,
+            **{key: payload.get(key) or structured.get(key) or {} for key in ("independent_ideal", "current_portfolio_assessment")}}
+        snapshot = payload.get("portfolio_snapshot") or {}
+        reader.update(is_partial=True, executive_summary=description,
+            portfolio_diagnosis={"current_cash_pct": (snapshot.get("portfolio") or {}).get("cash_pct")})
+        markdown = render_portfolio_memo(snapshot=snapshot, structured=draft,
+            evidence_brief=payload.get("evidence_brief") or {}, citations=payload.get("source_citations") or [])
+    return {"summary": summary, "memo": {**common, "structured_data": reader,
+            "analysis_health": {"status": health["status"], "label": health["label"]},
+            "memo_markdown": markdown}}
+
+
+def _read_portfolio_memo(path):
+    def build(path, payload):
+        result = _build_portfolio_read_models(path, payload)
+        if result is None:
+            raise HTTPException(status_code=400, detail="Artifact is not a portfolio positioning memo")
+        return result
+    try:
+        return portfolio_read_store.memo(path, build)
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=400, detail="Unable to read portfolio memo") from exc
+
+
+def _portfolio_response(payload, headers):
+    return Response(json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+                    media_type="application/json", headers=headers)
+
+
+@router.get("/api/portfolio-positioning-runs/{run_id}")
+async def get_portfolio_positioning_run(run_id: str, request: Request = None,
+                                        view: Literal["full", "memo", "research"] = "full"):
+    path = _resolve_portfolio_positioning_artifact_path(Path(run_id).name)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Portfolio positioning artifact not found")
+    headers = {"Cache-Control": "private, no-store"}
+    if view == "memo":
+        etag = memo_etag(path)
+        headers = {"Cache-Control": "private, no-cache", "ETag": etag}
+        validators = request.headers.get("if-none-match", "").split(",") if request else []
+        if any(value.strip() == "*" or value.strip().removeprefix("W/") == etag.removeprefix("W/") for value in validators):
+            return Response(status_code=304, headers=headers)
+        payload = await asyncio.to_thread(_read_portfolio_memo, path)
+        if memo_etag(path) != etag:
+            headers = {"Cache-Control": "private, no-store"}
+    else:
+        payload = await asyncio.to_thread(_get_portfolio_positioning_run, run_id)
+        if view == "research":
+            for key in ("analyst_memo_markdown", "chairman_memo_markdown", "memo_markdown", "analyst_document", "chairman_document"):
+                payload.pop(key, None)
+    if request is None:
+        return payload  # Preserve internal callers and the full-data API contract.
+    return await asyncio.to_thread(_portfolio_response, payload, headers)
+
+
+def _get_portfolio_positioning_run(run_id: str):
+    """Load one portfolio-positioning artifact for the dedicated portfolio memo UI."""
+    safe_name = Path(run_id).name
+    path = _resolve_portfolio_positioning_artifact_path(safe_name)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Portfolio positioning artifact not found")
+
+    try:
+        payload = cancellation_view(path, json.loads(path.read_text(encoding="utf-8")))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to parse artifact: {exc}") from exc
+
+    stage3_result = _extract_stage3_result_from_artifact(payload) or {}
+    structured = stage3_result.get("structured_data")
+    if not isinstance(structured, dict) or not _is_portfolio_positioning_artifact(payload, structured):
+        raise HTTPException(status_code=400, detail="Artifact is not a portfolio positioning memo")
+
+    recorded_date = timestamp(payload.get("updated_at")) or timestamp(structured.get("analysis_date"))
+    artifact_updated_at = recorded_date.isoformat() if recorded_date else datetime.utcfromtimestamp(path.stat().st_mtime).replace(microsecond=0).isoformat() + "Z"
+    analyst_document = stage3_result.get("analyst_document") if isinstance(stage3_result, dict) else {}
+    chairman_document = stage3_result.get("chairman_document") if isinstance(stage3_result, dict) else {}
+    if not isinstance(analyst_document, dict):
+        analyst_document = {}
+    if not isinstance(chairman_document, dict):
+        chairman_document = {}
+    memo_markdown = (
+        str(payload.get("chairman_memo_markdown") or "").strip()
+        or str(payload.get("analyst_memo_markdown") or "").strip()
+        or str((chairman_document or {}).get("content_markdown") or "").strip()
+        or str((analyst_document or {}).get("content_markdown") or "").strip()
+    )
+
+    from ..portfolio_runtime import workload_summary
+    return {
+        "id": safe_name,
+        "file": safe_name,
+        "label": _build_portfolio_positioning_run_label(path.stem, structured, payload),
+        "analysis_kind": "portfolio_positioning",
+        "analysis_health": analysis_health(payload),
+        "workflow_version": payload.get("workflow_version"),
+        "investment_plays": payload.get("investment_plays") or (payload.get("portfolio_context") or {}).get("investment_plays") or [],
+        "workload": payload.get("workload") or workload_summary(payload.get("stage_receipts") or []),
+        "execution_progress": payload.get("execution_progress"),
+        "checkpoint_info": payload.get("checkpoint_info"),
+        "can_resume": path.with_suffix(".checkpoint.json").is_file(),
+        "provenance": payload.get("provenance") or {},
+        "stage_receipts": [{key: value for key, value in row.items() if key not in {"prompt", "raw_response", "request_messages", "retained_output"}} for row in payload.get("stage_receipts") or []],
+        "portfolio_memo_ensemble": business_data(payload.get("portfolio_memo_ensemble") or {}),
+        "structured_data": {**structured, "decision": decision_for_artifact(payload),
+                            "asset_class_targets": recorded_display_rows(payload, "asset_class_targets")},
+        "retained_research": payload.get("retained_research") or {},
+        "portfolio_snapshot": payload.get("portfolio_snapshot") if isinstance(payload.get("portfolio_snapshot"), dict) else {},
+        "evidence_brief": payload.get("evidence_brief") if isinstance(payload.get("evidence_brief"), dict) else {},
+        "allocator_council_runs": payload.get("allocator_council_runs") if isinstance(payload.get("allocator_council_runs"), list) else [],
+        "macro_positioning": payload.get("macro_positioning") if isinstance(payload.get("macro_positioning"), dict) else {},
+        "allocator_commentary": payload.get("allocator_commentary") if isinstance(payload.get("allocator_commentary"), dict) else {},
+        "updated_at": artifact_updated_at,
+        "summary_fields": _build_summary_fields(structured, {}),
+        "analyst_memo_markdown": str(payload.get("analyst_memo_markdown") or "").strip(),
+        "chairman_memo_markdown": str(payload.get("chairman_memo_markdown") or "").strip() or memo_markdown,
+        "memo_markdown": memo_markdown,
+        "analyst_document": analyst_document,
+        "chairman_document": chairman_document,
+    }
+
+
+@router.get("/api/portfolio-positioning-runs/{run_id}/stages/{stage_index}")
+async def get_portfolio_stage_record(run_id: str, stage_index: int):
+    path = _resolve_portfolio_positioning_artifact_path(Path(run_id).name)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Portfolio run not found")
+    payload = json.loads(path.read_text())
+    receipts = payload.get("stage_receipts") or []
+    if not 0 <= stage_index < len(receipts):
+        raise HTTPException(status_code=404, detail="Stage record not found")
+    from ..portfolio_runtime import load_record
+    try:
+        return {"record": load_record(path.parent, receipts[stage_index])}
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail="Saved request details are unavailable or failed their integrity check") from exc
+
+
+class PortfolioReviewRequest(BaseModel):
+    user_adjustment: bool = False
+    mandate: Dict[str, Any] = Field(default_factory=dict)
+    exposures: Dict[str, Dict[str, Any]] = Field(default_factory=dict)
+    scenarios: List[Dict[str, Any]] = Field(default_factory=list)
+    observations: List[Dict[str, Any]] = Field(default_factory=list)
+    total_returns: List[Dict[str, Any]] = Field(default_factory=list)
+    alternatives: List[Dict[str, Any]] = Field(default_factory=list)
+    risk_assessment: Dict[str, Any] = Field(default_factory=dict)
+
+
+@router.post("/api/portfolio-positioning-runs/{run_id}/review")
+async def review_portfolio_positioning_run(run_id: str, request: PortfolioReviewRequest):
+    _ensure_system_enabled()
+    try:
+        json.dumps(request.model_dump(), allow_nan=False)
+        if any(not isinstance(row.get("shocks", {}), dict) for row in request.scenarios):
+            raise ValueError("Scenario shocks must be named numeric values")
+        if any(not isinstance(row.get("sensitivities", {}), dict) for row in request.exposures.values()):
+            raise ValueError("Sensitivities must be named numeric values")
+        for row in request.total_returns:
+            series = row.get("cumulative_total_returns", [])
+            if not isinstance(series, list) or any(not isinstance(point, dict) for point in series):
+                raise ValueError("Cumulative returns must be dated return objects")
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    path = _resolve_portfolio_positioning_artifact_path(Path(run_id).name)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Portfolio run not found")
+    payload = json.loads(path.read_text())
+    snapshot = {**(payload.get("portfolio_snapshot") or {}), "mandate": request.mandate or (payload.get("portfolio_snapshot") or {}).get("mandate", {})}
+    if request.mandate:
+        invalid = [issue for issue in mandate_issues(request.mandate) if not issue.startswith("Missing ")]
+        if invalid:
+            raise HTTPException(status_code=422, detail="; ".join(invalid))
+    proposal = payload.get("macro_positioning") or payload.get("structured_data") or {}
+    evidence = payload.get("evidence_brief") or {}
+    now = utc_now()
+    decision = decision_for_artifact(payload, mandate=snapshot["mandate"], exposures=request.exposures, scenarios=request.scenarios,
+        risk_assessment=request.risk_assessment, review_at=now)
+    snapshot["decision_at"] = decision["decision_at"]
+    report = {"as_of": now, "source_run": path.name, "source_hash": digest(payload), "decision": decision,
+              "user_adjustment": request.user_adjustment,
+              "scenarios": scenario_comparison(decision, request.scenarios, request.exposures),
+              "conditions": evaluate_conditions(proposal.get("monitoring_triggers") or [], request.observations, now),
+              "performance": shadow_returns(decision, request.total_returns, as_of=now), "alternatives": [],
+              "forecast_calibration": forecast_calibration(proposal.get("forecasts") or [], request.observations, now)}
+    for alternative in request.alternatives:
+        alternate_decision = build_decision(snapshot, alternative, evidence)
+        report["alternatives"].append({"name": alternative.get("name"), "funding": alternate_decision["funding"],
+            "origin": "user_adjustment", "model_reviewed": False,
+            "scenarios": scenario_comparison(alternate_decision, request.scenarios, request.exposures),
+            "performance": shadow_returns(alternate_decision, request.total_returns, as_of=now)})
+    review_dir = path.parent / "portfolio_reviews" / path.stem
+    review_dir.mkdir(parents=True, exist_ok=True)
+    review_id = digest({"request": request.model_dump(), "report": report})
+    (review_dir / f"{review_id}.json").write_text(json.dumps({**report, "inputs": request.model_dump()}, ensure_ascii=False, indent=2))
+    return {**report, "review_id": review_id}
+
+
+@router.get("/api/portfolio-positioning-runs/{run_id}/reviews")
+async def list_portfolio_reviews(run_id: str):
+    path = _resolve_portfolio_positioning_artifact_path(Path(run_id).name)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Portfolio run not found")
+    directory = path.parent / "portfolio_reviews" / path.stem
+    return {"reviews": [json.loads(item.read_text()) for item in sorted(directory.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:50]]}
+
+
+@router.delete("/api/portfolio-positioning-runs/{run_id}")
+async def delete_portfolio_positioning_run(run_id: str):
+    safe_name = Path(run_id).name
+    source_path = _resolve_portfolio_positioning_artifact_path(safe_name)
+    related_paths = _collect_portfolio_positioning_related_paths(safe_name)
+    if not related_paths:
+        raise HTTPException(status_code=404, detail="Portfolio positioning artifact not found")
+
+    deleted: List[str] = []
+    failed: List[Dict[str, str]] = []
+    for path in related_paths:
+        try:
+            path.unlink(missing_ok=True)
+            try:
+                deleted.append(str(path.relative_to(PROJECT_ROOT)))
+            except Exception:
+                deleted.append(str(path))
+        except Exception as exc:
+            failed.append({"path": str(path), "error": str(exc)})
+
+    _invalidate_portfolio_positioning_run_cache()
+    if not source_path.exists():
+        await asyncio.to_thread(portfolio_read_store.forget, source_path)
+
+    status = "deleted" if not failed else ("partial" if deleted else "failed")
+    if not deleted and failed:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": status,
+                "run_id": safe_name,
+                "deleted_count": 0,
+                "failed": failed,
+            },
+        )
+    return {
+        "status": status,
+        "run_id": safe_name,
+        "deleted_count": len(deleted),
+        "deleted": deleted,
+        "failed": failed,
+    }
+
+
+@router.get("/api/gantt-runs")
+async def list_gantt_runs(limit: int = 20, ticker: Optional[str] = None):
+    """List recent output artifacts that contain Stage 3 structured data."""
+    safe_limit = max(1, int(limit))
+    ticker_filter = _normalize_run_ticker(ticker)
+    ticker_filter_aliases = _run_ticker_aliases(ticker_filter)
+    now_ts = time.time()
+    cache_key = _GANTT_RUN_LIST_CACHE.get("key")
+    cache_runs = _GANTT_RUN_LIST_CACHE.get("runs")
+    cache_expiry = float(_GANTT_RUN_LIST_CACHE.get("expires_at") or 0.0)
+    requested_cache_key = f"{safe_limit}|{ticker_filter}"
+    if (
+        isinstance(cache_runs, list)
+        and cache_key == requested_cache_key
+        and now_ts <= cache_expiry
+    ):
+        return {"runs": cache_runs}
+
+    search_roots = [OUTPUTS_DIR]
+    if JOBS_OUTPUTS_DIR != OUTPUTS_DIR:
+        search_roots.append(JOBS_OUTPUTS_DIR)
+    if not any(root.exists() for root in search_roots):
+        return {"runs": []}
+
+    all_json: List[Path] = []
+    for root in search_roots:
+        if not root.exists():
+            continue
+        all_json.extend(root.glob("*.json"))
+    all_json = sorted(all_json, key=lambda p: p.stat().st_mtime, reverse=True)
+    # Keep exactly one artifact per run id (prefer canonical base .json if present).
+    selected: Dict[str, Path] = {}
+    for path in all_json:
+        canonical_id = _canonical_run_id_for_listing(path.name)
+        if canonical_id in selected:
+            continue
+        # Prefer canonical base .json in the same directory when available.
+        canonical_path_same_dir = path.parent / canonical_id
+        selected[canonical_id] = (
+            canonical_path_same_dir if canonical_path_same_dir.exists() else path
+        )
+
+    candidates = sorted(
+        selected.values(),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    runs: List[Dict[str, Any]] = []
+    for path in candidates:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+
+        structured = _extract_stage3_structured_from_artifact(payload)
+        if not isinstance(structured, dict) or not structured:
+            continue
+        if _is_portfolio_positioning_artifact(payload, structured):
+            continue
+        run_ticker = _normalize_run_ticker(structured.get("ticker"))
+        run_ticker_aliases = _run_ticker_aliases(run_ticker)
+        if ticker_filter_aliases and not (run_ticker_aliases & ticker_filter_aliases):
+            continue
+
+        run_id = path.name
+        updated_at = datetime.utcfromtimestamp(path.stat().st_mtime).replace(microsecond=0).isoformat() + "Z"
+        quality_total = _pick_score_total(structured.get("quality_score"))
+        value_total = _pick_score_total(structured.get("value_score"))
+        score_inputs = [
+            score
+            for score in (quality_total, value_total)
+            if isinstance(score, (int, float))
+        ]
+        mean_quality_value = round(sum(score_inputs) / len(score_inputs), 2) if len(score_inputs) == 2 else None
+        scenario_router = _build_scenario_router_summary(
+            _load_latest_scenario_router_state(run_id)
+        )
+        runs.append(
+            {
+                "id": run_id,
+                "file": path.name,
+                "label": _build_gantt_run_label(path.stem, structured),
+                "ticker": structured.get("ticker"),
+                "company_name": structured.get("company_name") or structured.get("company"),
+                "analysis_date": structured.get("analysis_date"),
+                "updated_at": updated_at,
+                "quality_score": quality_total,
+                "value_score": value_total,
+                "mean_quality_value_score": mean_quality_value,
+                "freshness": _compute_run_freshness(structured, updated_at),
+                "scenario_router": scenario_router,
+            }
+        )
+        if len(runs) >= safe_limit:
+            break
+
+    _GANTT_RUN_LIST_CACHE["key"] = requested_cache_key
+    _GANTT_RUN_LIST_CACHE["runs"] = runs
+    _GANTT_RUN_LIST_CACHE["expires_at"] = now_ts + float(GANTT_RUN_LIST_CACHE_TTL_SEC)
+    return {"runs": runs}
+
+
+@router.get("/api/gantt-runs/{run_id}")
+async def get_gantt_run(run_id: str):
+    """Load one output artifact and return Stage 3 structured data for gantt-lab."""
+    safe_name = Path(run_id).name
+    path = _resolve_run_artifact_path(safe_name)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Run artifact not found")
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to parse artifact: {exc}") from exc
+
+    stage3_result = _extract_stage3_result_from_artifact(payload) or {}
+    structured = stage3_result.get("structured_data")
+    if not isinstance(structured, dict) or not structured:
+        raise HTTPException(status_code=400, detail="Artifact does not contain Stage 3 structured data")
+    if _is_portfolio_positioning_artifact(payload, structured):
+        raise HTTPException(
+            status_code=400,
+            detail="Portfolio positioning artifacts must be loaded via /api/portfolio-positioning-runs/{run_id}",
+        )
+    _backfill_stage2_ranking_telemetry(structured, payload)
+
+    # Backfill current share price for charting if Stage 3/jsonifier omitted it.
+    market_data = structured.get("market_data")
+    if not isinstance(market_data, dict):
+        market_data = {}
+        structured["market_data"] = market_data
+    current_price = market_data.get("current_price")
+    if current_price in (None, "", "n/a", "N/A"):
+        inferred_current_price = _infer_current_price_from_artifact(payload)
+        if inferred_current_price is not None:
+            market_data["current_price"] = inferred_current_price
+    # Keep price_targets.current_price aligned with market_data.current_price.
+    price_targets = structured.get("price_targets")
+    if not isinstance(price_targets, dict):
+        price_targets = {}
+        structured["price_targets"] = price_targets
+    if (
+        market_data.get("current_price") not in (None, "", "n/a", "N/A")
+        and price_targets.get("current_price") in (None, "", "n/a", "N/A")
+    ):
+        price_targets["current_price"] = market_data.get("current_price")
+
+    # Normalize timeline rows for frontend charting. If the JSONifier omitted the
+    # structured field, recover it from the saved chairman XML memo.
+    timeline_rows = _normalize_timeline_rows_for_api(structured.get("development_timeline"))
+    if not timeline_rows:
+        extracted_rows, extracted_stage, _ = _extract_development_timeline_from_text(
+            stage3_result.get("response") or ""
+        )
+        timeline_rows = _normalize_timeline_rows_for_api(extracted_rows)
+        if extracted_stage and not structured.get("current_development_stage"):
+            structured["current_development_stage"] = extracted_stage
+    structured["development_timeline"] = timeline_rows
+    # Keep historical catalyst references lightweight: max one prior catalyst, rest future/current.
+    extended_analysis = structured.get("extended_analysis")
+    if isinstance(extended_analysis, dict) and isinstance(extended_analysis.get("next_major_catalysts"), list):
+        extended_analysis["next_major_catalysts"] = _cap_previous_catalyst_rows(
+            extended_analysis.get("next_major_catalysts") or [],
+            max_previous=1,
+        )
+
+    memo_payload = _extract_memo_content(payload, stage3_result, path)
+    analyst_document = stage3_result.get("analyst_document") if isinstance(stage3_result, dict) else {}
+    chairman_document = stage3_result.get("chairman_document") if isinstance(stage3_result, dict) else {}
+
+    artifact_updated_at = datetime.utcfromtimestamp(path.stat().st_mtime).replace(microsecond=0).isoformat() + "Z"
+    delta_latest = get_latest_delta(safe_name)
+    freshness = _compute_run_freshness(structured, artifact_updated_at)
+    router_state = _build_scenario_router_summary(
+        _load_latest_scenario_router_state(safe_name)
+    )
+    summary_fields = _build_summary_fields(structured, freshness)
+    summary_fields.update(
+        {
+            "current_path": str(router_state.get("current_path") or "").strip(),
+            "path_transition": str(router_state.get("path_transition") or "").strip(),
+            "scenario_router_action": str(router_state.get("action") or "").strip(),
+            "scenario_router_impact": str(router_state.get("impact_level") or "").strip(),
+        }
+    )
+    return {
+        "id": safe_name,
+        "file": safe_name,
+        "label": _build_gantt_run_label(path.stem, structured),
+        "structured_data": structured,
+        "updated_at": artifact_updated_at,
+        "freshness": freshness,
+        "summary_fields": summary_fields,
+        "scenario_router": router_state,
+        "delta_check": delta_latest or {},
+        "analyst_memo_markdown": memo_payload.get("analyst_memo_markdown", ""),
+        "chairman_memo_markdown": memo_payload.get("chairman_memo_markdown", ""),
+        "analyst_document": analyst_document if isinstance(analyst_document, dict) else {},
+        "chairman_document": chairman_document if isinstance(chairman_document, dict) else {},
+    }
+
+
+@router.delete("/api/gantt-runs/{run_id}")
+async def delete_gantt_run(run_id: str):
+    safe_name = Path(run_id).name
+    canonical_id = _canonical_run_id_for_listing(safe_name)
+    existing_path = _resolve_run_artifact_path(canonical_id)
+    if existing_path.exists() and existing_path.is_file():
+        try:
+            existing_payload = json.loads(existing_path.read_text(encoding="utf-8"))
+            existing_structured = _extract_stage3_structured_from_artifact(existing_payload)
+            if _is_portfolio_positioning_artifact(existing_payload, existing_structured):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Portfolio positioning artifacts must be deleted via /api/portfolio-positioning-runs/{run_id}",
+                )
+        except HTTPException:
+            raise
+        except Exception:
+            pass
+    related_paths = _collect_run_related_paths(canonical_id)
+    if not related_paths:
+        raise HTTPException(status_code=404, detail="Run artifact not found")
+
+    deleted: List[str] = []
+    failed: List[Dict[str, str]] = []
+    for path in related_paths:
+        try:
+            path.unlink(missing_ok=True)
+            try:
+                deleted.append(str(path.relative_to(PROJECT_ROOT)))
+            except Exception:
+                deleted.append(str(path))
+        except Exception as exc:
+            failed.append({"path": str(path), "error": str(exc)})
+
+    _invalidate_gantt_run_cache()
+
+    status = "deleted" if not failed else ("partial" if deleted else "failed")
+    if not deleted and failed:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": status,
+                "run_id": canonical_id,
+                "deleted_count": 0,
+                "failed": failed,
+            },
+        )
+
+    return {
+        "status": status,
+        "run_id": canonical_id,
+        "deleted_count": len(deleted),
+        "deleted_files": deleted,
+        "failed": failed,
+    }
+
+
+@router.get("/api/gantt-runs/{run_id}/report-packet")
+async def get_gantt_run_report_packet(run_id: str):
+    """
+    Return a single integration packet for external apps:
+    summary fields + full gantt-lab payload + memo markdown.
+    """
+    run_payload = await get_gantt_run(run_id)
+    return _build_integration_packet(run_id=str(run_payload.get("id") or run_id), run_payload=run_payload)
+
+@router.get("/api/gantt-runs/{run_id}/delta-check/latest")
+async def get_latest_delta_check(run_id: str):
+    """Return latest delta-check result for a run, if available."""
+    safe_name = Path(run_id).name
+    path = _resolve_run_artifact_path(safe_name)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Run artifact not found")
+
+    latest = get_latest_delta(safe_name)
+    if not latest:
+        raise HTTPException(status_code=404, detail="No delta-check artifact found for run")
+    return latest
+
+
+@router.post("/api/gantt-runs/{run_id}/delta-check")
+async def post_delta_check(
+    run_id: str,
+    force: bool = False,
+    max_sources: int = 12,
+    lookback_days: int = 14,
+):
+    """Run lightweight delta monitor against the selected run artifact."""
+    safe_name = Path(run_id).name
+    path = _resolve_run_artifact_path(safe_name)
+    if not path.exists() or not path.is_file():
+        raise HTTPException(status_code=404, detail="Run artifact not found")
+
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Failed to parse artifact: {exc}") from exc
+
+    stage3_result = _extract_stage3_result_from_artifact(payload) or {}
+    structured = stage3_result.get("structured_data")
+    if not isinstance(structured, dict) or not structured:
+        raise HTTPException(status_code=400, detail="Artifact does not contain Stage 3 structured data")
+
+    artifact_updated_at = datetime.utcfromtimestamp(path.stat().st_mtime).replace(microsecond=0).isoformat() + "Z"
+    try:
+        result = await run_delta_check(
+            run_id=safe_name,
+            structured=structured,
+            artifact_updated_at=artifact_updated_at,
+            force=bool(force),
+            max_sources=max(1, int(max_sources)),
+            lookback_days=max(1, int(lookback_days)),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Delta-check failed: {exc}") from exc
+
+    return result

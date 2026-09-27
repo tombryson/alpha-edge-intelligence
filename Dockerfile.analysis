@@ -1,0 +1,38 @@
+FROM node:22-slim AS frontend-builder
+
+WORKDIR /frontend
+
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend ./
+RUN npm run build
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PORT=8001
+
+WORKDIR /app
+
+COPY pyproject.toml uv.lock ./
+COPY backend ./backend
+COPY portfolio_positioning_memo.py ./portfolio_positioning_memo.py
+COPY tests/integration/test_quality_mvp.py ./test_quality_mvp.py
+COPY tests/integration/test_emulated_council.py ./test_emulated_council.py
+COPY tests/integration/test_perplexity_pdf_dump.py ./test_perplexity_pdf_dump.py
+COPY tests/integration/test_pdf_dump_worker_summaries.py ./test_pdf_dump_worker_summaries.py
+COPY scripts ./scripts
+COPY docs ./docs
+COPY .env.example ./.env.example
+
+# Build frontend in the remote builder so deployed UI matches source changes.
+COPY --from=frontend-builder /frontend/dist ./frontend/dist
+
+RUN pip install --no-cache-dir --upgrade pip uv && \
+    python3 -c "import tomllib; d=tomllib.load(open('pyproject.toml','rb')); open('/tmp/reqs.txt','w').write('\n'.join(d['project']['dependencies']))" && \
+    pip install --no-cache-dir -r /tmp/reqs.txt
+
+EXPOSE 8001
+
+CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT}"]

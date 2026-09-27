@@ -1,0 +1,233 @@
+.portfolio-lab-root .portfolio-memo-appendix {
+  padding: 20px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
+}
+
+.portfolio-memo-appendix > summary {
+  cursor: pointer;
+  font-size: 16px;
+  font-weight: 600;
+  padding: 8px 0;
+}
+
+.portfolio-lab-root .memo-panel .markdown-content {
+  padding: 0;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  letter-spacing: 0;
+}
+
+.portfolio-theme-switch {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-self: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.portfolio-theme-switch button {
+  min-width: 50px;
+  min-height: 30px;
+  border: 0;
+  border-radius: 0;
+}
+
+.portfolio-theme-switch button + button {
+  border-left: 1px solid var(--line-strong);
+}
+
+.portfolio-theme-switch button[aria-pressed='true'] {
+  color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.portfolio-theme-switch button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* The original light stylesheet stays unchanged; only the switch is shared. */
+.portfolio-lab-root[data-theme='dark'] {
+  color-scheme: dark;
+  --page: #0f1114;
+  --surface: #15181d;
+  --surface-muted: #1c2027;
+  --ink: #e1e8ef;
+  --body: #c7d0d8;
+  --muted: #9ca9b5;
+  --line: rgba(188, 206, 221, 0.15);
+  --line-strong: rgba(188, 206, 221, 0.24);
+  --accent: #e4ae45;
+  --accent-soft: rgba(228, 174, 69, 0.08);
+  --danger: #f19696;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  letter-spacing: 0;
+}
+
+.portfolio-lab-root[data-theme='dark'],
+.portfolio-lab-root[data-theme='dark'] * {
+  scrollbar-color: #424c57 transparent;
+  scrollbar-width: thin;
+}
+
+.portfolio-lab-root[data-theme='dark'] button:focus-visible,
+.portfolio-lab-root[data-theme='dark'] a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-kicker,
+.portfolio-lab-root[data-theme='dark'] .portfolio-stat-label,
+.portfolio-lab-root[data-theme='dark'] .portfolio-allocation-grid-row.header > span {
+  letter-spacing: 0;
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-lab-header h1 {
+  font-size: 28px;
+  letter-spacing: 0;
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-header-actions {
+  align-items: center;
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-header-actions > button,
+.portfolio-lab-root[data-theme='dark'] .portfolio-run-list-head button,
+.portfolio-lab-root[data-theme='dark'] .portfolio-theme-switch {
+  border-radius: 6px;
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-error {
+  border-color: rgba(241, 150, 150, 0.35);
+  background: rgba(229, 119, 119, 0.08);
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-run-list {
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-run-card span {
+  font-size: 12px;
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-run-card strong {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-hero-card,
+.portfolio-lab-root[data-theme='dark'] .portfolio-panel {
+  min-width: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-hero-card h2 {
+  font-size: 24px;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-hero-card p {
+  color: var(--body);
+  font-size: 15px;
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-panel p,
+.portfolio-lab-root[data-theme='dark'] .portfolio-allocation-rationales p,
+.portfolio-lab-root[data-theme='dark'] .memo-panel p,
+.portfolio-lab-root[data-theme='dark'] .memo-panel li {
+  color: var(--body);
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-section-head p {
+  color: var(--muted);
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-target-bar-segment {
+  border-right-color: var(--page);
+  color: #111315;
+  background: hsl(calc(92 + (var(--segment-index) * 31)), 32%, 65%);
+  letter-spacing: 0;
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-target-bar-segment span {
+  min-width: 0;
+  padding: 0 5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-allocation-grid-row > span,
+.portfolio-lab-root[data-theme='dark'] .portfolio-allocation-grid-row > div {
+  overflow-wrap: anywhere;
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-action.add {
+  color: #75c98e;
+  background: rgba(117, 201, 142, 0.1);
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-action.trim {
+  background: rgba(241, 150, 150, 0.1);
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-action.review {
+  color: #91bee8;
+  background: rgba(145, 190, 232, 0.1);
+}
+
+.portfolio-lab-root[data-theme='dark'] .portfolio-action.hold {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.portfolio-lab-root[data-theme='dark'] .markdown-content {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.portfolio-lab-root[data-theme='dark'] .markdown-content a {
+  color: #91bee8;
+  text-underline-offset: 3px;
+}
+
+.portfolio-lab-root[data-theme='dark'] .markdown-content a:hover {
+  color: var(--accent);
+}
+
+.portfolio-lab-root[data-theme='dark'] .markdown-content pre,
+.portfolio-lab-root[data-theme='dark'] .markdown-content code {
+  color: var(--ink);
+  background: var(--surface-muted);
+}
+
+.portfolio-lab-root[data-theme='dark'] .markdown-content pre code {
+  background: transparent;
+}
+
+.portfolio-lab-root[data-theme='dark'] .markdown-content blockquote {
+  color: var(--muted);
+  border-left-color: var(--accent);
+}
+
+.portfolio-lab-root[data-theme='dark'] .markdown-content hr {
+  margin: 18px 0;
+  border: 0;
+  border-top: 1px solid var(--line);
+}
+
+.portfolio-lab-root[data-theme='dark'] .markdown-content table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}

@@ -1,0 +1,43 @@
+.portfolio-run-progress {
+  padding: 18px 0;
+  margin-bottom: 18px;
+  border-block: 1px solid var(--line);
+  color: var(--ink);
+  min-width: 0;
+  font-size: 14px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: 0;
+}
+.portfolio-progress-heading, .portfolio-progress-heading strong {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.portfolio-progress-heading { justify-content: space-between; flex-wrap: wrap; }
+.portfolio-progress-heading strong { font-size: 16px; }
+.portfolio-progress-heading svg { flex-shrink: 0; color: var(--accent); }
+.portfolio-run-progress .portfolio-progress-phase { margin: 10px 0 16px; line-height: 1.5; }
+.portfolio-progress-times { display: flex; flex-wrap: wrap; gap: 12px 36px; margin: 0 0 14px; }
+.portfolio-progress-times dt, .portfolio-progress-times dd span { color: var(--muted); font-size: 12px; }
+.portfolio-progress-times dd { margin: 5px 0 0; font-variant-numeric: tabular-nums; }
+.portfolio-lab-root .portfolio-run-progress details { background: transparent; color: var(--ink); border: 0; border-radius: 0; padding: 0; margin: 0; }
+.portfolio-lab-root .portfolio-progress-details > summary { cursor: pointer; color: var(--muted); padding: 8px 0; background: transparent; }
+.portfolio-lab-root .portfolio-progress-details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.portfolio-progress-heading button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; min-height: 36px; border: 1px solid var(--line-strong); border-radius: 3px; color: var(--ink); background: var(--surface); cursor: pointer; font: inherit; }
+.portfolio-progress-scroll { max-height: 340px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; padding-right: 10px; }
+.portfolio-progress-heartbeat { color: var(--muted); font-size: 12px; }
+.portfolio-progress-request { display: grid; grid-template-columns: minmax(0, 1fr) 140px; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.portfolio-progress-request strong, .portfolio-progress-request code, .portfolio-progress-request span { display: block; overflow-wrap: anywhere; }
+.portfolio-progress-request code { font-size: 12px; color: var(--muted); margin-top: 4px; white-space: normal; }
+.portfolio-progress-request-state { text-align: right; font-size: 12px; line-height: 1.7; font-variant-numeric: tabular-nums; }
+.portfolio-progress-retry { color: var(--muted); font-size: 12px; margin-top: 5px; }
+.portfolio-progress-phases { margin-top: 16px; }
+.portfolio-progress-phases > div { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; padding: 8px 0; font-size: 12px; }
+.portfolio-progress-phases small { display: block; color: var(--muted); margin-top: 4px; }
+.portfolio-progress-error { color: var(--danger); font-size: 13px; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .portfolio-progress-times { gap: 12px 20px; }
+  .portfolio-progress-request { grid-template-columns: minmax(0, 1fr) 105px; }
+  .portfolio-progress-phases > div { grid-template-columns: minmax(0, 1fr) 105px; }
+  .portfolio-progress-phases > div > span:last-child { text-align: right; }
+}

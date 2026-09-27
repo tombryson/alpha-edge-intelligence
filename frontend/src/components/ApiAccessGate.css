@@ -1,0 +1,54 @@
+.api-access-page {
+  --access-bg: #f5f7fa;
+  --access-panel: #fff;
+  --access-text: #20272f;
+  --access-muted: #596773;
+  --access-border: #c9d2d9;
+  --access-accent: #087b65;
+  --access-error: #a32937;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  box-sizing: border-box;
+  background: var(--access-bg);
+  color: var(--access-text);
+}
+.api-access-panel {
+  width: 100%;
+  max-width: 400px;
+  padding: 30px;
+  box-sizing: border-box;
+  border: 1px solid var(--access-border);
+  border-radius: 8px;
+  background: var(--access-panel);
+}
+.api-access-panel h1 { margin: 12px 0 26px; font-size: 22px; line-height: 1.35; letter-spacing: 0; color: inherit; }
+.api-access-icon { color: var(--access-accent); }
+.api-access-form { display: grid; gap: 12px; }
+.api-access-form label { font-size: 14px; font-weight: 600; color: inherit; }
+.api-access-form input[type="password"] {
+  width: 100%; min-width: 0; height: 42px; box-sizing: border-box;
+  padding: 8px 12px; border: 1px solid var(--access-border); border-radius: 4px;
+  background: var(--access-bg); color: var(--access-text); font: inherit;
+}
+.api-access-form .api-access-remember { display: flex; align-items: center; gap: 8px; font-weight: 400; color: var(--access-muted); }
+.api-access-remember input { width: 16px; height: 16px; margin: 0; accent-color: var(--access-accent); }
+.api-access-panel button {
+  display: flex; justify-content: center; align-items: center; gap: 8px; min-height: 42px;
+  width: 100%; margin-top: 6px; padding: 9px 16px; border: 0; border-radius: 4px;
+  background: var(--access-accent); color: #fff; font-size: 14px; font-weight: 600; cursor: pointer;
+}
+.api-access-panel button:disabled { opacity: .7; cursor: wait; }
+.api-access-panel :focus-visible { outline: 2px solid var(--access-accent); outline-offset: 3px; }
+.api-access-error { margin: 0; color: var(--access-error); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.api-access-status { display: flex; align-items: center; gap: 8px; color: var(--access-muted); font-size: 14px; }
+.api-access-spinner { animation: api-access-spin 1s linear infinite; flex: 0 0 auto; }
+@keyframes api-access-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .api-access-spinner { animation: none; } }
+@media (prefers-color-scheme: dark) {
+  .api-access-page {
+    --access-bg: #10151b; --access-panel: #192129; --access-text: #edf1f4;
+    --access-muted: #abb7c2; --access-border: #475562; --access-accent: #087b65; --access-error: #ffacb6;
+  }
+}

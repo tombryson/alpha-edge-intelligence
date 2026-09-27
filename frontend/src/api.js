@@ -1,0 +1,786 @@
+/**
+ * API client for the LLM Council backend.
+ */
+
+import { API_BASE, authFetch } from './apiAuth';
+
+const RETRYABLE_HTTP_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function readJsonSafe(response) {
+  try {
+    return await response.json();
+  } catch {
+    return {};
+  }
+}
+
+function errorDetailFromPayload(payload) {
+  if (!payload || typeof payload !== 'object') return '';
+  const detail = payload.detail;
+  if (!detail) return '';
+  return typeof detail === 'string' ? detail : typeof detail.message === 'string' ? detail.message : JSON.stringify(detail);
+}
+
+async function fetchJsonWithRetry(url, init = {}, options = {}) {
+  const retries = Math.max(0, Number.isFinite(Number(options.retries)) ? Number(options.retries) : 2);
+  const timeoutMs = Math.max(1000, Number.isFinite(Number(options.timeoutMs)) ? Number(options.timeoutMs) : 25000);
+  let lastError = null;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await authFetch(url, { ...init, signal: controller.signal });
+      clearTimeout(timeout);
+      const body = await readJsonSafe(response);
+      if (response.ok || !RETRYABLE_HTTP_STATUSES.has(response.status) || attempt >= retries) {
+        return { response, body };
+      }
+      await sleep(500 * (attempt + 1));
+    } catch (err) {
+      clearTimeout(timeout);
+      lastError = err;
+      if (attempt >= retries) break;
+      await sleep(500 * (attempt + 1));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Network request failed');
+}
+
+async function fetchPortfolioView(runId, view, signal) {
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  if (signal?.aborted) cancel();
+  signal?.addEventListener('abort', cancel, { once: true });
+  const timeout = setTimeout(cancel, 30000);
+  try {
+    const response = await authFetch(`${API_BASE}/api/portfolio-positioning-runs/${encodeURIComponent(runId)}?view=${view}`, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(errorDetailFromPayload(await readJsonSafe(response)) || 'Failed to load portfolio memo');
+    }
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+    signal?.removeEventListener('abort', cancel);
+  }
+}
+
+export const api = {
+  getPortfolioMemo(runId, { signal } = {}) {
+    return fetchPortfolioView(runId, 'memo', signal);
+  },
+
+  getPortfolioSupportingAnalysis(runId, { signal } = {}) {
+    return fetchPortfolioView(runId, 'research', signal);
+  },
+  async listModelRoutes() {
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/model-routing`,
+      { method: 'GET' },
+      { retries: 2, timeoutMs: 20000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail || 'Failed to load model routing');
+    }
+    return body;
+  },
+
+  async updateModelRoute(routeId, value) {
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/model-routing/${encodeURIComponent(routeId)}`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value }),
+      },
+      { retries: 1, timeoutMs: 20000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail || 'Failed to update model route');
+    }
+    return body;
+  },
+
+  async clearModelRoute(routeId) {
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/model-routing/${encodeURIComponent(routeId)}`,
+      { method: 'DELETE' },
+      { retries: 1, timeoutMs: 20000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail || 'Failed to reset model route');
+    }
+    return body;
+  },
+
+  /**
+   * List all available analysis templates.
+   */
+  async listTemplates() {
+    const response = await authFetch(`${API_BASE}/api/templates`);
+    if (!response.ok) {
+      throw new Error('Failed to list templates');
+    }
+    return response.json();
+  },
+
+  /**
+   * List all available company types.
+   */
+  async listCompanyTypes() {
+    const response = await authFetch(`${API_BASE}/api/company-types`);
+    if (!response.ok) {
+      throw new Error('Failed to list company types');
+    }
+    return response.json();
+  },
+
+  /**
+   * List all available exchanges.
+   */
+  async listExchanges() {
+    const response = await authFetch(`${API_BASE}/api/exchanges`);
+    if (!response.ok) {
+      throw new Error('Failed to list exchanges');
+    }
+    return response.json();
+  },
+
+  /**
+   * List recent Stage 3 run artifacts suitable for gantt-lab.
+   */
+  async listGanttRuns(limit = 20, ticker = '') {
+    const qs = new URLSearchParams();
+    qs.set('limit', String(limit));
+    if (String(ticker || '').trim()) {
+      qs.set('ticker', String(ticker || '').trim());
+    }
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/gantt-runs?${qs.toString()}`,
+      { method: 'GET' },
+      { retries: 3, timeoutMs: 30000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail ? `Failed to list gantt runs: ${detail}` : 'Failed to list gantt runs');
+    }
+    return body;
+  },
+
+  /**
+   * Delete one Stage 3 run artifact family.
+   */
+  async deleteGanttRun(runId) {
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/gantt-runs/${encodeURIComponent(runId)}`,
+      { method: 'DELETE' },
+      { retries: 2, timeoutMs: 30000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail ? `Failed to delete gantt run: ${detail}` : 'Failed to delete gantt run');
+    }
+    return body;
+  },
+
+  /**
+   * Load one Stage 3 run artifact for gantt-lab.
+   */
+  async getGanttRun(runId) {
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/gantt-runs/${encodeURIComponent(runId)}`,
+      { method: 'GET' },
+      { retries: 3, timeoutMs: 30000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail ? `Failed to load gantt run: ${detail}` : 'Failed to load gantt run');
+    }
+    return body;
+  },
+
+  /**
+   * List portfolio positioning memo artifacts.
+   */
+  async listPortfolioPositioningRuns(limit = 20) {
+    const qs = new URLSearchParams();
+    qs.set('limit', String(limit));
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/portfolio-positioning-runs?${qs.toString()}`,
+      { method: 'GET' },
+      { retries: 3, timeoutMs: 30000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail ? `Failed to list portfolio positioning runs: ${detail}` : 'Failed to list portfolio positioning runs');
+    }
+    return body;
+  },
+
+  /**
+   * Load one portfolio positioning memo artifact.
+   */
+  async getPortfolioPositioningRun(runId) {
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/portfolio-positioning-runs/${encodeURIComponent(runId)}`,
+      { method: 'GET' },
+      { retries: 3, timeoutMs: 30000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail ? `Failed to load portfolio positioning run: ${detail}` : 'Failed to load portfolio positioning run');
+    }
+    return body;
+  },
+
+  /**
+   * Delete one portfolio positioning memo artifact family.
+   */
+  async deletePortfolioPositioningRun(runId) {
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/portfolio-positioning-runs/${encodeURIComponent(runId)}`,
+      { method: 'DELETE' },
+      { retries: 2, timeoutMs: 30000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail ? `Failed to delete portfolio positioning run: ${detail}` : 'Failed to delete portfolio positioning run');
+    }
+    return body;
+  },
+
+  /**
+   * Load one integration-ready report packet for a run.
+   */
+  async getRunReportPacket(runId) {
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/gantt-runs/${encodeURIComponent(runId)}/report-packet`,
+      { method: 'GET' },
+      { retries: 3, timeoutMs: 35000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail ? `Failed to load report packet: ${detail}` : 'Failed to load report packet');
+    }
+    return body;
+  },
+
+  /**
+   * Submit an async analysis job.
+   */
+  async createAnalysisJob(payload) {
+    const response = await authFetch(`${API_BASE}/api/analysis-jobs`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload || {}),
+    });
+    if (!response.ok) {
+      throw new Error(errorDetailFromPayload(await response.json().catch(() => ({}))) || 'Failed to create analysis job');
+    }
+    return response.json();
+  },
+
+  async preflightPortfolio(payload) {
+    const response = await authFetch(`${API_BASE}/api/portfolio-positioning/preflight`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(errorDetailFromPayload(await response.json().catch(() => ({}))) || 'Could not check analysis funding');
+    return response.json();
+  },
+
+  async reviewPortfolioRun(runId, payload) {
+    const response = await authFetch(`${API_BASE}/api/portfolio-positioning-runs/${encodeURIComponent(runId)}/review`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(errorDetailFromPayload(await response.json().catch(() => ({}))) || 'Portfolio review failed');
+    return response.json();
+  },
+
+  async listPortfolioReviews(runId) {
+    const response = await authFetch(`${API_BASE}/api/portfolio-positioning-runs/${encodeURIComponent(runId)}/reviews`);
+    if (!response.ok) throw new Error('Could not load saved reviews');
+    return response.json();
+  },
+
+  async getPortfolioStageRecord(runId, index) {
+    const response = await authFetch(`${API_BASE}/api/portfolio-positioning-runs/${encodeURIComponent(runId)}/stages/${index}`);
+    if (!response.ok) throw new Error('Could not load stage record');
+    return response.json();
+  },
+
+  /**
+   * List async analysis jobs.
+   */
+  async listAnalysisJobs(limit = 20, jobType = '') {
+    const response = await authFetch(
+      `${API_BASE}/api/analysis-jobs?limit=${encodeURIComponent(limit)}${jobType ? `&job_type=${encodeURIComponent(jobType)}` : ''}`
+    );
+    if (!response.ok) {
+      throw new Error('Failed to list analysis jobs');
+    }
+    return response.json();
+  },
+
+  /**
+   * Get one async analysis job status.
+   */
+  async getAnalysisJob(jobId) {
+    const response = await authFetch(
+      `${API_BASE}/api/analysis-jobs/${encodeURIComponent(jobId)}`
+    );
+    if (!response.ok) {
+      throw new Error('Failed to load analysis job');
+    }
+    return response.json();
+  },
+
+  async cancelAnalysisJob(jobId) {
+    const response = await authFetch(`${API_BASE}/api/analysis-jobs/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
+    if (!response.ok) {
+      const detail = await response.json().catch(() => ({}));
+      throw new Error(detail.detail || 'Unable to stop analysis');
+    }
+    return response.json();
+  },
+
+  /**
+   * Get completed result for an async analysis job.
+   */
+  async getAnalysisJobResult(jobId) {
+    const response = await authFetch(
+      `${API_BASE}/api/analysis-jobs/${encodeURIComponent(jobId)}/result`
+    );
+    if (!response.ok) {
+      throw new Error('Failed to load analysis job result');
+    }
+    return response.json();
+  },
+
+  /**
+   * Subscribe to live async analysis job events (SSE).
+   * Returns a stream handle; caller should call `close()` when finished.
+   */
+  streamAnalysisJobEvents(jobId, handlers = {}) {
+    const onUpdate =
+      typeof handlers.onUpdate === 'function' ? handlers.onUpdate : () => {};
+    const onError =
+      typeof handlers.onError === 'function' ? handlers.onError : () => {};
+    const controller = new AbortController();
+    const processPayload = (payload) => {
+      try {
+        const event = JSON.parse(payload || '{}');
+        onUpdate(event);
+      } catch (err) {
+        onError(err);
+      }
+    };
+    authFetch(
+      `${API_BASE}/api/analysis-jobs/${encodeURIComponent(jobId)}/events`,
+      { method: 'GET', signal: controller.signal }
+    ).then(async (response) => {
+      if (!response.ok || !response.body) {
+        throw new Error('Failed to stream analysis job events');
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const processBuffer = () => {
+        buffer = buffer.replace(/\r\n/g, '\n');
+        let boundary = buffer.indexOf('\n\n');
+        while (boundary !== -1) {
+          const rawEvent = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          const payload = rawEvent
+            .split('\n')
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).trimStart())
+            .join('\n');
+          if (payload) processPayload(payload);
+          boundary = buffer.indexOf('\n\n');
+        }
+      };
+      while (!controller.signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        processBuffer();
+      }
+      buffer += decoder.decode();
+      processBuffer();
+    }).catch((err) => {
+      if (!controller.signal.aborted) onError(err);
+    });
+
+    return { close: () => controller.abort() };
+  },
+
+  /**
+   * Load latest delta-check result for one run.
+   */
+  async getLatestDeltaCheck(runId) {
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/gantt-runs/${encodeURIComponent(runId)}/delta-check/latest`,
+      { method: 'GET' },
+      { retries: 2, timeoutMs: 30000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail ? `Failed to load latest delta-check: ${detail}` : 'Failed to load latest delta-check');
+    }
+    return body;
+  },
+
+  async getAnnouncementRouterOverview(limit = 100, ticker = '') {
+    const qs = new URLSearchParams();
+    qs.set('limit', String(limit));
+    if (String(ticker || '').trim()) {
+      qs.set('ticker', String(ticker || '').trim());
+    }
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/announcement-router/overview?${qs.toString()}`,
+      { method: 'GET' },
+      { retries: 2, timeoutMs: 30000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail ? `Failed to load scenario router overview: ${detail}` : 'Failed to load scenario router overview');
+    }
+    return body;
+  },
+
+  async getScenarioRouterOverview(limit = 100, ticker = '') {
+    return this.getAnnouncementRouterOverview(limit, ticker);
+  },
+
+  async listAnnouncementRouterEvents(limit = 50, ticker = '') {
+    const qs = new URLSearchParams();
+    qs.set('limit', String(limit));
+    if (String(ticker || '').trim()) {
+      qs.set('ticker', String(ticker || '').trim());
+    }
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/announcement-router/events?${qs.toString()}`,
+      { method: 'GET' },
+      { retries: 2, timeoutMs: 30000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail ? `Failed to load scenario router events: ${detail}` : 'Failed to load scenario router events');
+    }
+    return body;
+  },
+
+  async listScenarioRouterEvents(limit = 50, ticker = '') {
+    return this.listAnnouncementRouterEvents(limit, ticker);
+  },
+
+  async getSecurityPriceHistory(ticker = '') {
+    const cleanTicker = String(ticker || '').trim();
+    if (!cleanTicker) {
+      return { available: false, points: [], latest: null, error: 'missing_ticker' };
+    }
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/market-path/security-history/${encodeURIComponent(cleanTicker)}`,
+      { method: 'GET' },
+      { retries: 1, timeoutMs: 15000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail ? `Failed to load price history: ${detail}` : 'Failed to load price history');
+    }
+    return body;
+  },
+
+  async getAnnouncementRouterEvaluations() {
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/announcement-router/evaluations`,
+      { method: 'GET' },
+      { retries: 2, timeoutMs: 30000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail ? `Failed to load scenario router evaluations: ${detail}` : 'Failed to load scenario router evaluations');
+    }
+    return body;
+  },
+
+  async getScenarioRouterEvaluations() {
+    return this.getAnnouncementRouterEvaluations();
+  },
+
+  async updateAnnouncementRouterReview(eventId, payload = {}) {
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/announcement-router/reviews/${encodeURIComponent(eventId)}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload || {}),
+      },
+      { retries: 1, timeoutMs: 20000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail ? `Failed to update router review: ${detail}` : 'Failed to update router review');
+    }
+    return body;
+  },
+
+  async reassessAnnouncementRouterEvent(eventId) {
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/announcement-router/reassess/${encodeURIComponent(eventId)}`,
+      { method: 'POST' },
+      { retries: 0, timeoutMs: 90000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail ? `Failed to reassess router event: ${detail}` : 'Failed to reassess router event');
+    }
+    return body;
+  },
+
+  /**
+   * Run (or fetch cached) delta-check for one run.
+   */
+  async runDeltaCheck(runId, options = {}) {
+    const force = options.force ? 'true' : 'false';
+    const maxSources = Number.isFinite(Number(options.max_sources)) ? Number(options.max_sources) : 12;
+    const lookbackDays = Number.isFinite(Number(options.lookback_days)) ? Number(options.lookback_days) : 14;
+    const { response, body } = await fetchJsonWithRetry(
+      `${API_BASE}/api/gantt-runs/${encodeURIComponent(runId)}/delta-check`
+      + `?force=${encodeURIComponent(force)}`
+      + `&max_sources=${encodeURIComponent(maxSources)}`
+      + `&lookback_days=${encodeURIComponent(lookbackDays)}`,
+      { method: 'POST' },
+      { retries: 2, timeoutMs: 35000 }
+    );
+    if (!response.ok) {
+      const detail = errorDetailFromPayload(body);
+      throw new Error(detail ? `Failed to run delta-check: ${detail}` : 'Failed to run delta-check');
+    }
+    return body;
+  },
+
+  /**
+   * Load a markdown memo artifact from outputs/.
+   */
+  async getMemo(memoName) {
+    const response = await authFetch(`${API_BASE}/api/memos/${encodeURIComponent(memoName)}`);
+    if (!response.ok) {
+      throw new Error('Failed to load memo artifact');
+    }
+    return response.json();
+  },
+
+  /**
+   * List all conversations.
+   */
+  async listConversations() {
+    const response = await authFetch(`${API_BASE}/api/conversations`);
+    if (!response.ok) {
+      throw new Error('Failed to list conversations');
+    }
+    return response.json();
+  },
+
+  /**
+   * Create a new conversation.
+   */
+  async createConversation() {
+    const response = await authFetch(`${API_BASE}/api/conversations`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({}),
+    });
+    if (!response.ok) {
+      throw new Error('Failed to create conversation');
+    }
+    return response.json();
+  },
+
+  /**
+   * Get a specific conversation.
+   */
+  async getConversation(conversationId) {
+    const response = await authFetch(
+      `${API_BASE}/api/conversations/${conversationId}`
+    );
+    if (!response.ok) {
+      throw new Error('Failed to get conversation');
+    }
+    return response.json();
+  },
+
+  /**
+   * Send a message in a conversation.
+   */
+  async sendMessage(conversationId, content) {
+    const response = await authFetch(
+      `${API_BASE}/api/conversations/${conversationId}/message`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error('Failed to send message');
+    }
+    return response.json();
+  },
+
+  /**
+   * Send a message and receive streaming updates.
+   * @param {string} conversationId - The conversation ID
+   * @param {string} content - The message content
+   * @param {boolean} enableSearch - Whether to enable internet search
+   * @param {File[]} files - Array of PDF files to upload
+   * @param {File|null} supplementaryFile - Optional supplementary document to enrich analysis
+   * @param {string|null} ticker - Optional ticker code (e.g., "ASX:WWI", "NYSE:NEM")
+   * @param {string|null} councilMode - Council execution mode ("local" | "perplexity_emulated")
+   * @param {string|null} researchDepth - Research depth ("basic" | "deep")
+   * @param {string|null} templateId - Optional template ID (e.g., "gold_miner")
+   * @param {string|null} companyType - Optional company type (e.g., "gold_miner")
+   * @param {string|null} exchange - Optional exchange id (e.g., "asx", "nyse")
+   * @param {function} onEvent - Callback function for each event: (eventType, data) => void
+   * @returns {Promise<void>}
+   */
+  async sendMessageStream(
+    conversationId,
+    content,
+    enableSearch,
+    files,
+    supplementaryFile,
+    ticker,
+    councilMode,
+    researchDepth,
+    templateId,
+    companyType,
+    exchange,
+    onEvent
+  ) {
+    // Create FormData for multipart upload
+    const formData = new FormData();
+    formData.append('content', content);
+    formData.append('enable_search', enableSearch.toString());
+
+    // Add ticker if provided
+    if (ticker) {
+      formData.append('ticker', ticker);
+    }
+
+    // Add council mode if provided
+    if (councilMode) {
+      formData.append('council_mode', councilMode);
+    }
+
+    // Add research depth if provided
+    if (researchDepth) {
+      formData.append('research_depth', researchDepth);
+    }
+
+    // Add template ID if provided
+    if (templateId) {
+      formData.append('template_id', templateId);
+    }
+
+    // Add company type if provided
+    if (companyType) {
+      formData.append('company_type', companyType);
+    }
+
+    // Add exchange if provided
+    if (exchange) {
+      formData.append('exchange', exchange);
+    }
+
+    // Add all files
+    if (files && files.length > 0) {
+      files.forEach(file => {
+        formData.append('files', file);
+      });
+    }
+
+    if (supplementaryFile) {
+      formData.append('supplementary_file', supplementaryFile);
+    }
+
+    const response = await authFetch(
+      `${API_BASE}/api/conversations/${conversationId}/message/stream`,
+      {
+        method: 'POST',
+        // Note: Do NOT set Content-Type header - browser will set it with boundary
+        body: formData,
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to send message');
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    const processBuffer = () => {
+      buffer = buffer.replace(/\r\n/g, '\n');
+      let boundary = buffer.indexOf('\n\n');
+      while (boundary !== -1) {
+        const rawEvent = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+
+        const dataLines = rawEvent
+          .split('\n')
+          .filter((line) => line.startsWith('data:'))
+          .map((line) => line.slice(5).trimStart());
+
+        if (dataLines.length > 0) {
+          const payload = dataLines.join('\n');
+          try {
+            const event = JSON.parse(payload);
+            onEvent(event.type, event);
+          } catch (e) {
+            console.error('Failed to parse SSE event:', e);
+          }
+        }
+
+        boundary = buffer.indexOf('\n\n');
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      processBuffer();
+    }
+
+    buffer += decoder.decode();
+    processBuffer();
+
+    const trailing = buffer.trim();
+    if (trailing.startsWith('data:')) {
+      const payload = trailing
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => line.slice(5).trimStart())
+        .join('\n');
+      if (payload) {
+        try {
+          const event = JSON.parse(payload);
+          onEvent(event.type, event);
+        } catch (e) {
+          console.error('Failed to parse trailing SSE event:', e);
+        }
+      }
+    }
+  },
+};
