@@ -1,5 +1,5 @@
 /**
- * API client for the LLM Council backend.
+ * API client for the Alpha Edge Intelligence backend.
  */
 
 import { API_BASE, authFetch } from './apiAuth';
